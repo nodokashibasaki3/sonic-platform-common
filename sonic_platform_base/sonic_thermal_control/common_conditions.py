@@ -79,6 +79,18 @@ class PresenceConditionBase(ThermalPolicyConditionBase):
             raise ValueError('{} was not loaded from JSON'.format(type(self).__name__))
         return self._op(self.get_count(thermal_info_dict), self._count)
 
+    def __eq__(self, other):
+        # The base class compares by type alone, which was sufficient when each count had
+        # its own class. One parameterised class means the comparison has to include the
+        # parameters, or the manager reads two policies guarded by different counts as
+        # duplicates and rejects the whole file.
+        if type(self) is not type(other):
+            return False
+        return (self._op_name, self._count) == (other._op_name, other._count)
+
+    def __hash__(self):
+        return hash((type(self), self._op_name, self._count))
+
 
 @thermal_json_object('fandrawer.presence')
 class FanDrawerPresenceCondition(PresenceConditionBase):
@@ -138,6 +150,14 @@ class ThermalOverThresholdCondition(ThermalPolicyConditionBase):
         if self._threshold == THRESHOLD_HIGH_CRITICAL:
             return info.is_over_high_critical_threshold()
         return info.is_over_high_threshold()
+
+    def __eq__(self, other):
+        if type(self) is not type(other):
+            return False
+        return self._threshold == other._threshold
+
+    def __hash__(self):
+        return hash((type(self), self._threshold))
 
 
 @thermal_json_object('default.operation')
