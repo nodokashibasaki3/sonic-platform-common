@@ -171,10 +171,27 @@ def test_set_max_speed_action_caps_without_driving():
 
 # --- PID control algorithm ----------------------------------------------------------------
 
-def test_requires_configured_domains(monkeypatch):
+def test_missing_config_degrades_to_max_instead_of_refusing_to_load(monkeypatch):
+    """
+    Raising here would abort the whole policy file and leave the daemon running with no
+    policies - outwardly healthy and not cooling. It must load and hold the fans up.
+    """
     monkeypatch.setattr(common_actions, 'load_thermal_config', lambda *a, **k: {})
-    with pytest.raises(ValueError, match='no pid_domains'):
-        ThermalControlAlgorithmAction().load_from_json({})
+    action = ThermalControlAlgorithmAction()
+    action.load_from_json({})            # must not raise
+
+    fans = [FakeFan(max_speed=100)]
+    action.execute(info_dict(fans=fans, thermals=[FakeThermal()]))
+    assert fans[0].speed == 100
+
+
+def test_missing_config_still_drives_fans_when_thermal_info_is_absent(monkeypatch):
+    monkeypatch.setattr(common_actions, 'load_thermal_config', lambda *a, **k: {})
+    action = ThermalControlAlgorithmAction()
+    action.load_from_json({})
+    fans = [FakeFan(max_speed=100)]
+    action.execute(info_dict(fans=fans))   # no thermal_info at all
+    assert fans[0].speed == 100
 
 
 def test_cool_switch_settles_at_the_minimum(algo):

@@ -125,6 +125,7 @@ class ThermalControlAlgorithmAction(ThermalPolicyActionBase):
         self._fan_min = None
         self._fan_max = None
         self._last_run = None
+        self._degraded = None
 
     def load_from_json(self, json_obj):
         # Defaults to the platform directory; overridable so the action can be exercised
@@ -132,19 +133,30 @@ class ThermalControlAlgorithmAction(ThermalPolicyActionBase):
         self._config = load_thermal_config(json_obj.get(JSON_FIELD_CONFIG_DIR))
         self._fan_min, self._fan_max = get_fan_limits(self._config)
         if not get_pid_domains(self._config):
-            raise ValueError('{}: no pid_domains configured'.format(type(self).__name__))
+            # Raising here aborts the whole policy file, which leaves the daemon running
+            # with no policies: healthy to every outward check, and not cooling anything.
+            # Load degraded instead and hold the fans up until the config is fixed.
+            self._degraded = 'no pid_domains configured'
+            self._logger.error('%s: %s; holding fans at %s%%',
+                               type(self).__name__, self._degraded, self._fan_max)
 
     def execute(self, thermal_info_dict):
+        if self._degraded:
+            self._set_fail_safe_speed(thermal_info_dict)
+            return
         try:
             self._run(thermal_info_dict)
         except Exception as exc:
             # Not re-raised: the policy engine has no handler, and aborting would skip every
             # remaining policy this pass. Fall back to full speed instead.
             self._logger.error('thermal control algorithm failed, going to max speed: %s', exc)
-            try:
-                set_all_fan_speeds(get_fans(thermal_info_dict), self._fan_max, self._logger)
-            except Exception as fallback_exc:
-                self._logger.error('fail-safe fan speed also failed: %s', fallback_exc)
+            self._set_fail_safe_speed(thermal_info_dict)
+
+    def _set_fail_safe_speed(self, thermal_info_dict):
+        try:
+            set_all_fan_speeds(get_fans(thermal_info_dict), self._fan_max, self._logger)
+        except Exception as exc:
+            self._logger.error('fail-safe fan speed also failed: %s', exc)
 
     def _run(self, thermal_info_dict):
         thermal_info = thermal_info_dict.get(ThermalInfo.INFO_NAME)

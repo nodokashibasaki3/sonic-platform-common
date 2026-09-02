@@ -107,3 +107,21 @@ def test_threshold_equality():
            make(ThermalOverThresholdCondition, threshold="high_critical")
     assert make(ThermalOverThresholdCondition, threshold="high") == \
            make(ThermalOverThresholdCondition, threshold="high")
+
+
+def test_policy_loads_even_when_the_thermal_config_is_missing(tmp_path, monkeypatch):
+    """
+    On hardware a missing thermal_config.json aborted thermal manager init, so thermalctld
+    ran with no policies at all: RUNNING, fans at their last value, nothing cooling. The
+    policy must still load so the control action can hold the fans up instead.
+    """
+    from sonic_platform_base.sonic_thermal_control import common_actions
+    monkeypatch.setattr(common_actions, 'load_thermal_config', lambda *a, **k: {})
+
+    manager = load(tmp_path, [
+        drawer_policy("One fan drawer present", "==", 1, 100),
+        {"name": "thermal control algorithm",
+         "conditions": [{"type": "fandrawer.presence", "op": ">", "count": 2}],
+         "actions": [{"type": "thermal.control_algo"}]},
+    ])
+    assert len(manager._policy_dict) == 2
