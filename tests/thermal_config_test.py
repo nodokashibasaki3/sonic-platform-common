@@ -116,3 +116,19 @@ def test_partial_config_keeps_defaults_for_absent_keys(tmp_path):
     assert get_interval(config) == 5
     assert get_fan_limits(config) == (thermal_config.DEFAULT_FAN_MIN_SPEED,
                                       thermal_config.DEFAULT_FAN_MAX_SPEED)
+
+
+@pytest.mark.parametrize("config, message", [
+    ({"fan_limits": [30, 100]}, "fan_limits must be an object"),
+    ({"pid_domains": ["asic"]}, "pid_domains must be an object"),
+    ({"pid_domains": {"asic": 10}}, "pid_domains.asic must be an object"),
+])
+def test_rejects_non_object_sections(tmp_path, config, message):
+    with pytest.raises(ThermalConfigError, match=message):
+        load_thermal_config(write_config(tmp_path, config))
+
+
+def test_error_names_the_file(tmp_path):
+    config_dir = write_config(tmp_path, {"interval": 0})
+    with pytest.raises(ThermalConfigError, match=thermal_config.CONFIG_FILE_NAME):
+        load_thermal_config(config_dir)

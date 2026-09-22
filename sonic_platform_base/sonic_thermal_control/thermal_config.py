@@ -16,6 +16,13 @@ DEFAULT_INTERVAL = 60
 DEFAULT_FAN_MIN_SPEED = 30.0
 DEFAULT_FAN_MAX_SPEED = 100.0
 
+KEY_INTERVAL = 'interval'
+KEY_FAN_LIMITS = 'fan_limits'
+KEY_FAN_MIN = 'min'
+KEY_FAN_MAX = 'max'
+KEY_PID_DOMAINS = 'pid_domains'
+KEY_SETPOINT = 'setpoint'
+
 _REQUIRED_GAINS = ('KP', 'KI', 'KD')
 
 
@@ -56,62 +63,84 @@ def load_thermal_config(config_dir=None):
 
 
 def get_interval(config, default=DEFAULT_INTERVAL):
-    return config.get('interval', default)
+    return config.get(KEY_INTERVAL, default)
 
 
 def get_fan_limits(config):
-    limits = config.get('fan_limits', {})
-    return (limits.get('min', DEFAULT_FAN_MIN_SPEED),
-            limits.get('max', DEFAULT_FAN_MAX_SPEED))
+    return _fan_limits(config.get(KEY_FAN_LIMITS, {}))
 
 
 def get_pid_domains(config):
-    return config.get('pid_domains', {})
+    return config.get(KEY_PID_DOMAINS, {})
 
 
 def get_domain_setpoint(config, domain):
     """Explicit target temperature for a domain, or None to derive it from the sensors."""
-    return get_pid_domains(config).get(domain, {}).get('setpoint')
+    return get_pid_domains(config).get(domain, {}).get(KEY_SETPOINT)
+
+
+def _fan_limits(limits):
+    return (limits.get(KEY_FAN_MIN, DEFAULT_FAN_MIN_SPEED),
+            limits.get(KEY_FAN_MAX, DEFAULT_FAN_MAX_SPEED))
 
 
 def _validate(config, path):
-    def fail(msg):
-        raise ThermalConfigError('{}: {}'.format(path, msg))
+    try:
+        _validate_interval(config.get(KEY_INTERVAL))
+        _validate_fan_limits(config.get(KEY_FAN_LIMITS))
+        _validate_pid_domains(config.get(KEY_PID_DOMAINS))
+    except _Invalid as exc:
+        raise ThermalConfigError('{}: {}'.format(path, exc)) from None
 
-    interval = config.get('interval')
-    if interval is not None:
-        if not isinstance(interval, (int, float)) or interval <= 0:
-            fail('interval must be a positive number, got {!r}'.format(interval))
 
-    limits = config.get('fan_limits')
-    if limits is not None:
-        if not isinstance(limits, dict):
-            fail('fan_limits must be an object')
-        low = limits.get('min', DEFAULT_FAN_MIN_SPEED)
-        high = limits.get('max', DEFAULT_FAN_MAX_SPEED)
-        for name, value in (('min', low), ('max', high)):
-            if not isinstance(value, (int, float)):
-                fail('fan_limits.{} must be a number, got {!r}'.format(name, value))
-        if low > high:
-            fail('fan_limits.min {} exceeds fan_limits.max {}'.format(low, high))
+class _Invalid(Exception):
+    """A validation failure, before the file path is attached."""
 
-    domains = config.get('pid_domains')
+
+def _is_number(value):
+    return isinstance(value, (int, float))
+
+
+def _validate_interval(interval):
+    if interval is not None and (not _is_number(interval) or interval <= 0):
+        raise _Invalid('interval must be a positive number, got {!r}'.format(interval))
+
+
+def _validate_fan_limits(limits):
+    if limits is None:
+        return
+    if not isinstance(limits, dict):
+        raise _Invalid('fan_limits must be an object')
+    low, high = _fan_limits(limits)
+    for name, value in ((KEY_FAN_MIN, low), (KEY_FAN_MAX, high)):
+        if not _is_number(value):
+            raise _Invalid('fan_limits.{} must be a number, got {!r}'.format(name, value))
+    if low > high:
+        raise _Invalid('fan_limits.min {} exceeds fan_limits.max {}'.format(low, high))
+
+
+def _validate_pid_domains(domains):
     if domains is None:
         return
     if not isinstance(domains, dict):
-        fail('pid_domains must be an object')
+        raise _Invalid('pid_domains must be an object')
     for domain, domain_config in domains.items():
-        if not isinstance(domain_config, dict):
-            fail("pid_domains.{} must be an object".format(domain))
-        for gain in _REQUIRED_GAINS:
-            if gain not in domain_config:
-                fail("pid_domains.{} is missing {}".format(domain, gain))
-            value = domain_config[gain]
-            if not isinstance(value, (int, float)) or value < 0:
-                fail("pid_domains.{}.{} must be a non-negative number, got {!r}".format(
-                    domain, gain, value))
-        if not any(domain_config[gain] for gain in _REQUIRED_GAINS):
-            fail("pid_domains.{} has all-zero gains".format(domain))
-        setpoint = domain_config.get('setpoint')
-        if setpoint is not None and not isinstance(setpoint, (int, float)):
-            fail("pid_domains.{}.setpoint must be a number, got {!r}".format(domain, setpoint))
+        _validate_pid_domain(domain, domain_config)
+
+
+def _validate_pid_domain(domain, domain_config):
+    if not isinstance(domain_config, dict):
+        raise _Invalid("pid_domains.{} must be an object".format(domain))
+    for gain in _REQUIRED_GAINS:
+        if gain not in domain_config:
+            raise _Invalid("pid_domains.{} is missing {}".format(domain, gain))
+        value = domain_config[gain]
+        if not _is_number(value) or value < 0:
+            raise _Invalid("pid_domains.{}.{} must be a non-negative number, got {!r}".format(
+                domain, gain, value))
+    if not any(domain_config[gain] for gain in _REQUIRED_GAINS):
+        raise _Invalid("pid_domains.{} has all-zero gains".format(domain))
+    setpoint = domain_config.get(KEY_SETPOINT)
+    if setpoint is not None and not _is_number(setpoint):
+        raise _Invalid("pid_domains.{}.setpoint must be a number, got {!r}".format(
+            domain, setpoint))
