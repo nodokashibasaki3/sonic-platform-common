@@ -32,7 +32,40 @@ THRESHOLD_HIGH = 'high'
 THRESHOLD_HIGH_CRITICAL = 'high_critical'
 
 
-class PresenceConditionBase(ThermalPolicyConditionBase):
+def _require_info(thermal_info_dict, info_class, owner):
+    info = thermal_info_dict.get(info_class.INFO_NAME)
+    if info is None:
+        # The policy references an info type it never declared in info_types. Returning
+        # False would quietly disable whatever policy this guards, which for a
+        # degraded-cooling condition means fans never ramp.
+        raise ValueError('{}: {} not collected; add it to info_types'.format(
+            owner, info_class.INFO_NAME))
+    return info
+
+
+class ParameterisedCondition(ThermalPolicyConditionBase):
+    """
+    A condition whose identity includes its parameters, not just its type.
+
+    The base class compares by type alone, which was sufficient when each count had its own
+    class. One parameterised class means the comparison has to include the parameters, or
+    the manager reads two policies guarded by different counts as duplicates and rejects the
+    whole file.
+    """
+
+    def _params(self):
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        if type(self) is not type(other):
+            return False
+        return self._params() == other._params()
+
+    def __hash__(self):
+        return hash((type(self), self._params()))
+
+
+class PresenceConditionBase(ParameterisedCondition):
     """Compares how many of something is present against a count from the policy file."""
 
     INFO_CLASS = None
@@ -46,7 +79,7 @@ class PresenceConditionBase(ThermalPolicyConditionBase):
         try:
             op_name = json_obj[JSON_FIELD_OP]
             count = json_obj[JSON_FIELD_COUNT]
-        except KeyError as exc:
+        except KeyError:
             raise ValueError('{} requires {} and {}'.format(
                 type(self).__name__, JSON_FIELD_OP, JSON_FIELD_COUNT)) from None
 
@@ -62,14 +95,7 @@ class PresenceConditionBase(ThermalPolicyConditionBase):
         self._count = count
 
     def get_info(self, thermal_info_dict):
-        info = thermal_info_dict.get(self.INFO_CLASS.INFO_NAME)
-        if info is None:
-            # The policy references an info type it never declared in info_types. Returning
-            # False would quietly disable whatever policy this guards, which for a
-            # degraded-cooling condition means fans never ramp.
-            raise ValueError('{}: {} not collected; add it to info_types'.format(
-                type(self).__name__, self.INFO_CLASS.INFO_NAME))
-        return info
+        return _require_info(thermal_info_dict, self.INFO_CLASS, type(self).__name__)
 
     def get_count(self, thermal_info_dict):
         raise NotImplementedError
@@ -79,17 +105,8 @@ class PresenceConditionBase(ThermalPolicyConditionBase):
             raise ValueError('{} was not loaded from JSON'.format(type(self).__name__))
         return self._op(self.get_count(thermal_info_dict), self._count)
 
-    def __eq__(self, other):
-        # The base class compares by type alone, which was sufficient when each count had
-        # its own class. One parameterised class means the comparison has to include the
-        # parameters, or the manager reads two policies guarded by different counts as
-        # duplicates and rejects the whole file.
-        if type(self) is not type(other):
-            return False
-        return (self._op_name, self._count) == (other._op_name, other._count)
-
-    def __hash__(self):
-        return hash((type(self), self._op_name, self._count))
+    def _params(self):
+        return self._op_name, self._count
 
 
 @thermal_json_object('fandrawer.presence')
@@ -123,7 +140,7 @@ class PsuPresenceCondition(PresenceConditionBase):
 
 
 @thermal_json_object('thermal.over.threshold')
-class ThermalOverThresholdCondition(ThermalPolicyConditionBase):
+class ThermalOverThresholdCondition(ParameterisedCondition):
     """
     e.g. {"type": "thermal.over.threshold", "threshold": "high_critical"}
 
@@ -143,21 +160,13 @@ class ThermalOverThresholdCondition(ThermalPolicyConditionBase):
         self._threshold = threshold
 
     def is_match(self, thermal_info_dict):
-        info = thermal_info_dict.get(ThermalInfo.INFO_NAME)
-        if info is None:
-            raise ValueError('{}: {} not collected; add it to info_types'.format(
-                type(self).__name__, ThermalInfo.INFO_NAME))
+        info = _require_info(thermal_info_dict, ThermalInfo, type(self).__name__)
         if self._threshold == THRESHOLD_HIGH_CRITICAL:
             return info.is_over_high_critical_threshold()
         return info.is_over_high_threshold()
 
-    def __eq__(self, other):
-        if type(self) is not type(other):
-            return False
-        return self._threshold == other._threshold
-
-    def __hash__(self):
-        return hash((type(self), self._threshold))
+    def _params(self):
+        return (self._threshold,)
 
 
 @thermal_json_object('default.operation')

@@ -150,3 +150,37 @@ def test_thermal_condition_needs_its_info_type():
 def test_default_condition_always_matches():
     assert DefaultCondition().is_match({}) is True
     assert DefaultCondition().is_match(drawers(0)) is True
+
+
+# --- equality, which the policy manager relies on to spot duplicate policies -------------
+
+def _load(cls, json_obj):
+    condition = cls()
+    condition.load_from_json(json_obj)
+    return condition
+
+
+def test_presence_condition_differs_from_another_type_with_the_same_parameters():
+    drawers = _load(FanDrawerPresenceCondition, {"op": "<=", "count": 2})
+    psus = _load(PsuPresenceCondition, {"op": "<=", "count": 2})
+    assert drawers != psus
+
+
+def test_equal_presence_conditions_hash_alike():
+    first = _load(FanDrawerPresenceCondition, {"op": "<=", "count": 2})
+    second = _load(FanDrawerPresenceCondition, {"op": "<=", "count": 2})
+    assert first == second
+    assert len({first, second}) == 1
+
+
+def test_threshold_conditions_compare_by_threshold():
+    high = _load(ThermalOverThresholdCondition, {"threshold": "high"})
+    also_high = _load(ThermalOverThresholdCondition, {})
+    critical = _load(ThermalOverThresholdCondition, {"threshold": "high_critical"})
+    assert high == also_high
+    assert high != critical
+    assert len({high, also_high, critical}) == 2
+
+
+def test_threshold_condition_differs_from_another_type():
+    assert _load(ThermalOverThresholdCondition, {}) != DefaultCondition()
