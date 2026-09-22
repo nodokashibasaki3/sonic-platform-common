@@ -35,6 +35,17 @@ class FakeFan:
         self.max_speed_set = value
 
 
+class CappingFan(FakeFan):
+    """Clamps writes to its max speed and reports success, as real platform fans do."""
+
+    def set_speed(self, speed):
+        return super().set_speed(min(speed, self._max_speed))
+
+    def set_max_speed(self, value):
+        super().set_max_speed(value)
+        self._max_speed = value
+
+
 class FakeThermal:
     def __init__(self, temperature=40.0, setpoint=80.0, domain='asic', pid=True, name='t'):
         self._temperature, self._setpoint = temperature, setpoint
@@ -273,3 +284,73 @@ def test_config_dir_can_be_overridden(tmp_path):
     fans = [FakeFan()]
     action.execute(info_dict(fans=fans, thermals=[FakeThermal(temperature=95.0, setpoint=80.0)]))
     assert fans[0].speed > 30
+
+
+# --- fail-safe vs. the fan max speed cap ------------------------------------------------
+
+def test_missing_config_fail_safe_lifts_a_lower_fan_cap(monkeypatch):
+    """
+    Policies cap the fans with fan.set_max_speed before the algorithm runs. The fail-safe
+    must not inherit that cap: on hardware it held the fans at 75% while logging 100%.
+    """
+    monkeypatch.setattr(common_actions, 'load_thermal_config', lambda *a, **k: {})
+    action = ThermalControlAlgorithmAction()
+    action.load_from_json({})
+    fans = [CappingFan(max_speed=75)]
+    action.execute(info_dict(fans=fans, thermals=[FakeThermal()]))
+    assert fans[0].speed == 100
+
+
+def test_algorithm_failure_fail_safe_lifts_a_lower_fan_cap(algo):
+    fans = [CappingFan(max_speed=75)]
+    algo.execute(info_dict(fans=fans))  # thermal_info missing
+    assert fans[0].speed == 100
+
+
+def test_fail_safe_still_drives_fans_whose_cap_cannot_be_raised(algo):
+    class StuckCapFan(CappingFan):
+        def set_max_speed(self, value):
+            raise RuntimeError("state db unavailable")
+
+    fans = [StuckCapFan(max_speed=75)]
+    algo.execute(info_dict(fans=fans))  # must not raise
+    assert fans[0].speed == 75
+
+
+def test_normal_control_keeps_the_fan_cap(algo):
+    fans = [CappingFan(max_speed=75)]
+    algo.execute(info_dict(fans=fans, thermals=[FakeThermal(temperature=150.0, setpoint=80.0)]))
+    assert fans[0].speed == 75
+    assert fans[0].max_speed_set is None
+
+
+def test_log_reports_fans_held_below_the_requested_speed(caplog):
+    caplog.set_level("INFO")
+    set_all_fan_speeds([CappingFan(max_speed=75), CappingFan(max_speed=100)], 100)
+    assert "1 capped by their max speed" in caplog.text
+
+
+class BasicFan:
+    """Only the FanBase API: no max speed cap to read or lift."""
+
+    def __init__(self):
+        self.speed = None
+
+    def set_speed(self, speed):
+        self.speed = speed
+        return True
+
+
+def test_set_all_fan_speeds_works_with_fans_that_have_no_cap(caplog):
+    caplog.set_level("INFO")
+    fans = [BasicFan()]
+    set_all_fan_speeds(fans, 80)
+    assert fans[0].speed == 80
+    assert "ERROR" not in caplog.text
+
+
+def test_fail_safe_works_with_fans_that_have_no_cap(algo, caplog):
+    fans = [BasicFan()]
+    algo.execute(info_dict(fans=fans))  # thermal_info missing
+    assert fans[0].speed == 100
+    assert "lifting max speed" not in caplog.text

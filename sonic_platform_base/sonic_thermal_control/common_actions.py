@@ -54,10 +54,14 @@ def set_all_fan_speeds(fans, speed, logger=None):
         raise FanControlError('no fans available to set speed')
 
     applied = 0
+    capped = 0
     for index, fan in enumerate(fans):
         try:
             if fan.set_speed(speed):
                 applied += 1
+                get_max_speed = getattr(fan, 'get_max_speed', None)
+                if get_max_speed is not None and get_max_speed() < speed:
+                    capped += 1
             else:
                 logger.warning('fan %d refused speed %.1f%%; it may not be present',
                                index, speed)
@@ -66,7 +70,11 @@ def set_all_fan_speeds(fans, speed, logger=None):
 
     if not applied:
         raise FanControlError('no fan accepted speed {:.1f}%'.format(speed))
-    logger.info('applied speed %.1f%% to %d/%d fans', speed, applied, len(fans))
+    if capped:
+        logger.info('applied speed %.1f%% to %d/%d fans, %d capped by their max speed',
+                    speed, applied, len(fans), capped)
+    else:
+        logger.info('applied speed %.1f%% to %d/%d fans', speed, applied, len(fans))
 
 
 @thermal_json_object('fan.all.set_speed')
@@ -154,7 +162,19 @@ class ThermalControlAlgorithmAction(ThermalPolicyActionBase):
 
     def _set_fail_safe_speed(self, thermal_info_dict):
         try:
-            set_all_fan_speeds(get_fans(thermal_info_dict), self._fan_max, self._logger)
+            fans = get_fans(thermal_info_dict)
+            # A fan.set_max_speed earlier in the policy caps the fans for normal running.
+            # Platforms clamp writes to that cap and still report success, so without
+            # lifting it the fail-safe would sit at the cap while logging full speed.
+            for index, fan in enumerate(fans):
+                if not hasattr(fan, 'set_max_speed'):
+                    continue  # not part of FanBase; such a fan has no cap to lift
+                try:
+                    fan.set_max_speed(self._fan_max)
+                except Exception as exc:
+                    self._logger.error('fan %d raised lifting max speed to %.1f%%: %s',
+                                       index, self._fan_max, exc)
+            set_all_fan_speeds(fans, self._fan_max, self._logger)
         except Exception as exc:
             self._logger.error('fail-safe fan speed also failed: %s', exc)
 
