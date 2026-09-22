@@ -172,20 +172,27 @@ class ThermalControlAlgorithmAction(ThermalPolicyActionBase):
     def _set_fail_safe_speed(self, thermal_info_dict):
         try:
             fans = get_fans(thermal_info_dict)
-            # A fan.set_max_speed earlier in the policy caps the fans for normal running.
-            # Platforms clamp writes to that cap and still report success, so without
-            # lifting it the fail-safe would sit at the cap while logging full speed.
-            for index, fan in enumerate(fans):
-                if not hasattr(fan, 'set_max_speed'):
-                    continue  # not part of FanBase; such a fan has no cap to lift
-                try:
-                    fan.set_max_speed(self._fan_max)
-                except Exception as exc:
-                    self._logger.error('fan %d raised lifting max speed to %.1f%%: %s',
-                                       index, self._fan_max, exc)
+            self._lift_fan_caps(fans)
             set_all_fan_speeds(fans, self._fan_max, self._logger)
         except Exception as exc:
             self._logger.error('fail-safe fan speed also failed: %s', exc)
+
+    def _lift_fan_caps(self, fans):
+        """
+        Raise every fan's cap to the configured maximum.
+
+        A fan.set_max_speed earlier in the policy caps the fans for normal running.
+        Platforms clamp writes to that cap and still report success, so without lifting it
+        the fail-safe would sit at the cap while logging full speed.
+        """
+        for index, fan in enumerate(fans):
+            if not hasattr(fan, 'set_max_speed'):
+                continue  # not part of FanBase; such a fan has no cap to lift
+            try:
+                fan.set_max_speed(self._fan_max)
+            except Exception as exc:
+                self._logger.error('fan %d raised lifting max speed to %.1f%%: %s',
+                                   index, self._fan_max, exc)
 
     def _run(self, thermal_info_dict):
         thermal_info = thermal_info_dict.get(ThermalInfo.INFO_NAME)

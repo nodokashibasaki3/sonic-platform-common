@@ -356,6 +356,24 @@ def test_fail_safe_works_with_fans_that_have_no_cap(algo, caplog):
     assert "lifting max speed" not in caplog.text
 
 
+def test_set_max_speed_action_keeps_going_past_a_failing_fan(caplog):
+    class RaisingCapFan(FakeFan):
+        def set_max_speed(self, value):
+            raise RuntimeError("state db unavailable")
+
+    action = SetMaxFanSpeedAction()
+    action.load_from_json({'max_speed': 75})
+    fans = [RaisingCapFan(), FakeFan()]
+    action.execute(info_dict(fans=fans))  # must not raise
+    assert fans[1].max_speed_set == 75
+    assert "fan 0 raised setting max speed" in caplog.text
+
+
+def test_fail_safe_that_cannot_find_fans_logs_instead_of_raising(algo, caplog):
+    algo.execute({})  # no fan info and no thermal info
+    assert "fail-safe fan speed also failed" in caplog.text
+
+
 # --- fans with only the FanBase API (other vendors) ------------------------------------------
 
 def test_pid_runs_on_fans_without_a_cap(algo):
