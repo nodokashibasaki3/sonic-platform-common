@@ -97,6 +97,9 @@ def _validate(config, path):
         for name, value in (('min', low), ('max', high)):
             if not _is_number(value):
                 fail('fan_limits.{} must be a number, got {!r}'.format(name, value))
+            if not 0 <= value <= 100:
+                fail('fan_limits.{} must be a percentage within [0, 100], got {}'.format(
+                    name, value))
         if low > high:
             fail('fan_limits.min {} exceeds fan_limits.max {}'.format(low, high))
 

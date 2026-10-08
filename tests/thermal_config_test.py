@@ -132,3 +132,18 @@ def test_partial_config_keeps_defaults_for_absent_keys(tmp_path):
 def test_rejects_booleans_where_numbers_are_expected(tmp_path, config):
     with pytest.raises(ThermalConfigError):
         load_thermal_config(write_config(tmp_path, config))
+
+
+@pytest.mark.parametrize("limits", [
+    {"min": -10, "max": 100},
+    {"min": 30, "max": 150},
+    {"min": -10, "max": 150},
+], ids=["min-below-0", "max-above-100", "both"])
+def test_rejects_fan_limits_outside_0_to_100(tmp_path, limits):
+    with pytest.raises(ThermalConfigError):
+        load_thermal_config(write_config(tmp_path, {"fan_limits": limits}))
+
+
+def test_accepts_fan_limits_at_the_bounds(tmp_path):
+    config = load_thermal_config(write_config(tmp_path, {"fan_limits": {"min": 0, "max": 100}}))
+    assert get_fan_limits(config) == (0, 100)
