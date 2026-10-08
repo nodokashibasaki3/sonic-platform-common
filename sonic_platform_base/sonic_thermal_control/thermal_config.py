@@ -74,13 +74,18 @@ def get_domain_setpoint(config, domain):
     return get_pid_domains(config).get(domain, {}).get('setpoint')
 
 
+def _is_number(value):
+    # JSON true/false load as bool, which is a subclass of int and would pass for 1 and 0.
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _validate(config, path):
     def fail(msg):
         raise ThermalConfigError('{}: {}'.format(path, msg))
 
     interval = config.get('interval')
     if interval is not None:
-        if not isinstance(interval, (int, float)) or interval <= 0:
+        if not _is_number(interval) or interval <= 0:
             fail('interval must be a positive number, got {!r}'.format(interval))
 
     limits = config.get('fan_limits')
@@ -90,7 +95,7 @@ def _validate(config, path):
         low = limits.get('min', DEFAULT_FAN_MIN_SPEED)
         high = limits.get('max', DEFAULT_FAN_MAX_SPEED)
         for name, value in (('min', low), ('max', high)):
-            if not isinstance(value, (int, float)):
+            if not _is_number(value):
                 fail('fan_limits.{} must be a number, got {!r}'.format(name, value))
         if low > high:
             fail('fan_limits.min {} exceeds fan_limits.max {}'.format(low, high))
@@ -107,11 +112,11 @@ def _validate(config, path):
             if gain not in domain_config:
                 fail("pid_domains.{} is missing {}".format(domain, gain))
             value = domain_config[gain]
-            if not isinstance(value, (int, float)) or value < 0:
+            if not _is_number(value) or value < 0:
                 fail("pid_domains.{}.{} must be a non-negative number, got {!r}".format(
                     domain, gain, value))
         if not any(domain_config[gain] for gain in _REQUIRED_GAINS):
             fail("pid_domains.{} has all-zero gains".format(domain))
         setpoint = domain_config.get('setpoint')
-        if setpoint is not None and not isinstance(setpoint, (int, float)):
+        if setpoint is not None and not _is_number(setpoint):
             fail("pid_domains.{}.setpoint must be a number, got {!r}".format(domain, setpoint))

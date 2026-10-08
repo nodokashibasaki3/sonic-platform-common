@@ -116,3 +116,19 @@ def test_partial_config_keeps_defaults_for_absent_keys(tmp_path):
     assert get_interval(config) == 5
     assert get_fan_limits(config) == (thermal_config.DEFAULT_FAN_MIN_SPEED,
                                       thermal_config.DEFAULT_FAN_MAX_SPEED)
+
+
+# JSON true/false load as Python bool, which is a subclass of int; a typo like "KP": true
+# must not pass for the number 1.
+
+@pytest.mark.parametrize("config", [
+    {"interval": True},
+    {"fan_limits": {"min": False, "max": 100}},
+    {"fan_limits": {"min": 30, "max": True}},
+    {"pid_domains": {"asic": {"KP": True, "KI": 0.1, "KD": 5}}},
+    {"pid_domains": {"asic": {"KP": True, "KI": False, "KD": False}}},
+    {"pid_domains": {"asic": {"KP": 10, "KI": 0.1, "KD": 5, "setpoint": True}}},
+], ids=["interval", "fan-min", "fan-max", "one-gain", "all-gains", "setpoint"])
+def test_rejects_booleans_where_numbers_are_expected(tmp_path, config):
+    with pytest.raises(ThermalConfigError):
+        load_thermal_config(write_config(tmp_path, config))
