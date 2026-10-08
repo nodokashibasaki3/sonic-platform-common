@@ -354,3 +354,37 @@ def test_fail_safe_works_with_fans_that_have_no_cap(algo, caplog):
     algo.execute(info_dict(fans=fans))  # thermal_info missing
     assert fans[0].speed == 100
     assert "lifting max speed" not in caplog.text
+
+
+# --- fans with only the FanBase API (other vendors) ------------------------------------------
+
+def test_pid_runs_on_fans_without_a_cap(algo):
+    """get_max_speed is not in FanBase; without it the PID must still run, not fail safe."""
+    fans = [BasicFan()]
+    algo.execute(info_dict(fans=fans, thermals=[FakeThermal(temperature=40.0, setpoint=80.0)]))
+    assert fans[0].speed == 30
+
+
+def test_pid_drives_uncapped_fans_up_to_the_configured_max(algo):
+    fans = [BasicFan()]
+    algo.execute(info_dict(fans=fans, thermals=[FakeThermal(temperature=150.0, setpoint=80.0)]))
+    assert fans[0].speed == 100
+
+
+def test_pid_uses_the_lowest_cap_among_fans_that_have_one(algo):
+    fans = [BasicFan(), FakeFan(max_speed=75)]
+    algo.execute(info_dict(fans=fans, thermals=[FakeThermal(temperature=150.0, setpoint=80.0)]))
+    assert fans[0].speed == 75
+
+
+def test_set_max_speed_skips_fans_without_a_cap_and_warns_once(caplog):
+    caplog.set_level("INFO")
+    action = SetMaxFanSpeedAction()
+    action.load_from_json({'max_speed': 75})
+    capped, basic = FakeFan(), BasicFan()
+    d = info_dict(fans=[capped, basic])
+    action.execute(d)
+    action.execute(d)
+    assert capped.max_speed_set == 75
+    assert "ERROR" not in caplog.text
+    assert caplog.text.count("no max speed") == 1

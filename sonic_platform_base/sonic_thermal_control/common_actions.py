@@ -102,6 +102,7 @@ class SetMaxFanSpeedAction(ThermalPolicyActionBase):
 
     def __init__(self):
         self._max_speed = None
+        self._warned_uncapped = False
 
     def load_from_json(self, json_obj):
         self._max_speed = _validate_percentage(
@@ -109,6 +110,14 @@ class SetMaxFanSpeedAction(ThermalPolicyActionBase):
 
     def execute(self, thermal_info_dict):
         for index, fan in enumerate(get_fans(thermal_info_dict)):
+            if not hasattr(fan, 'set_max_speed'):
+                # Not part of FanBase. Leaving such a fan uncapped only errs towards more
+                # cooling, so say so once instead of on every pass.
+                if not self._warned_uncapped:
+                    _logger.warning('fan %d has no max speed to set; %s leaves it uncapped',
+                                    index, type(self).__name__)
+                    self._warned_uncapped = True
+                continue
             try:
                 fan.set_max_speed(self._max_speed)
             except Exception as exc:
@@ -210,10 +219,16 @@ class ThermalControlAlgorithmAction(ThermalPolicyActionBase):
                            self._logger)
 
     def _current_max_speed(self, fans):
-        """The lowest ceiling any fan will accept, clamped to the configured range."""
+        """
+        The lowest ceiling any fan will accept, clamped to the configured range.
+
+        get_max_speed is not part of FanBase, so fans without it are taken to accept the
+        configured maximum.
+        """
         if not fans:
             raise FanControlError('no fans available to read a max speed from')
-        max_speed = min(fan.get_max_speed() for fan in fans)
+        caps = [fan.get_max_speed() for fan in fans if hasattr(fan, 'get_max_speed')]
+        max_speed = min(caps) if caps else self._fan_max
         if not self._fan_min <= max_speed <= self._fan_max:
             self._logger.error('fan max speed %s outside [%s, %s]; clamping',
                                max_speed, self._fan_min, self._fan_max)
