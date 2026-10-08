@@ -132,3 +132,34 @@ def test_error_names_the_file(tmp_path):
     config_dir = write_config(tmp_path, {"interval": 0})
     with pytest.raises(ThermalConfigError, match=thermal_config.CONFIG_FILE_NAME):
         load_thermal_config(config_dir)
+
+
+# JSON true/false load as Python bool, which is a subclass of int; a typo like "KP": true
+# must not pass for the number 1.
+
+@pytest.mark.parametrize("config", [
+    {"interval": True},
+    {"fan_limits": {"min": False, "max": 100}},
+    {"fan_limits": {"min": 30, "max": True}},
+    {"pid_domains": {"asic": {"KP": True, "KI": 0.1, "KD": 5}}},
+    {"pid_domains": {"asic": {"KP": True, "KI": False, "KD": False}}},
+    {"pid_domains": {"asic": {"KP": 10, "KI": 0.1, "KD": 5, "setpoint": True}}},
+], ids=["interval", "fan-min", "fan-max", "one-gain", "all-gains", "setpoint"])
+def test_rejects_booleans_where_numbers_are_expected(tmp_path, config):
+    with pytest.raises(ThermalConfigError):
+        load_thermal_config(write_config(tmp_path, config))
+
+
+@pytest.mark.parametrize("limits", [
+    {"min": -10, "max": 100},
+    {"min": 30, "max": 150},
+    {"min": -10, "max": 150},
+], ids=["min-below-0", "max-above-100", "both"])
+def test_rejects_fan_limits_outside_0_to_100(tmp_path, limits):
+    with pytest.raises(ThermalConfigError):
+        load_thermal_config(write_config(tmp_path, {"fan_limits": limits}))
+
+
+def test_accepts_fan_limits_at_the_bounds(tmp_path):
+    config = load_thermal_config(write_config(tmp_path, {"fan_limits": {"min": 0, "max": 100}}))
+    assert get_fan_limits(config) == (0, 100)

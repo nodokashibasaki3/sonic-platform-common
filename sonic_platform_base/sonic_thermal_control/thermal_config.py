@@ -98,7 +98,8 @@ class _Invalid(Exception):
 
 
 def _is_number(value):
-    return isinstance(value, (int, float))
+    # JSON true/false load as bool, which is a subclass of int and would pass for 1 and 0.
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _validate_interval(interval):
@@ -115,6 +116,9 @@ def _validate_fan_limits(limits):
     for name, value in ((KEY_FAN_MIN, low), (KEY_FAN_MAX, high)):
         if not _is_number(value):
             raise _Invalid('fan_limits.{} must be a number, got {!r}'.format(name, value))
+        if not 0 <= value <= 100:
+            raise _Invalid('fan_limits.{} must be a percentage within [0, 100], got {}'.format(
+                name, value))
     if low > high:
         raise _Invalid('fan_limits.min {} exceeds fan_limits.max {}'.format(low, high))
 
